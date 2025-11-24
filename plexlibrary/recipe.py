@@ -374,13 +374,27 @@ class Recipe():
                                     else:
                                         raise
                             # Clean up old, empty directories
-                            if os.path.exists(new_path) \
-                                    and not os.listdir(new_path):
-                                os.rmdir(new_path)
+                            if os.path.lexists(new_path):
+                                if os.path.islink(new_path):
+                                    # It's a link (broken or not), remove it if we need to recreate or if it's "empty" logic applies?
+                                    # The original logic only removed if os.listdir was empty (for dirs).
+                                    # But for symlinks, we probably want to remove if we are about to overwrite?
+                                    # Actually, the original logic was: if exists and empty, remove.
+                                    # But broken links look like they don't exist to os.path.exists.
+                                    # So we should check if it's a broken link and remove it?
+                                    # Or just remove it if we are about to overwrite it?
+                                    pass 
+                                elif os.path.isdir(new_path) and not os.listdir(new_path):
+                                    os.rmdir(new_path)
 
-                        if (dir and not os.path.exists(new_path)) \
-                                or not dir and not os.path.isfile(new_path):
+                        if (dir and not os.path.lexists(new_path)) \
+                                or not dir and not os.path.lexists(new_path):
                             try:
+                                source_path = old_path if dir else old_path_file
+                                logs.info(u"Linking: '{}' -> '{}'".format(source_path, new_path))
+                                if not os.path.exists(source_path):
+                                    logs.warning(u"Source path does not exist: '{}'".format(source_path))
+
                                 if os.name == 'nt':
                                     if dir:
                                         subprocess.call(['mklink', '/D',
@@ -395,6 +409,10 @@ class Recipe():
                                         os.symlink(old_path, new_path)
                                     else:
                                         os.symlink(old_path_file, new_path)
+                                
+                                if not os.path.exists(new_path):
+                                    logs.warning(u"Created link is broken (destination not found): '{}'".format(new_path))
+
                                 count += 1
                                 new_items.append(movie)
                                 updated_paths.append(new_path)
@@ -454,8 +472,9 @@ class Recipe():
         logs.info(u"Created symlinks for {count} new items:".format(count=count))
         for item in new_items:
             logs.info(u"{title} ({year})".format(title=item.title, year=getattr(item, 'year', None)))
+        return count
 
-    def _verify_new_library_and_get_items(self, create_if_not_found=False):
+    def _verify_new_library_and_get_items(self, create_if_not_found=False, expected_count=None):
         # Check if the new library exists in Plex
         try:
             new_library = self.plex.server.library.section(
@@ -477,12 +496,39 @@ class Recipe():
 
         # Wait for metadata to finish downloading before continuing
         logs.info(u"Waiting for metadata to finish downloading...")
-        new_library = self.plex.server.library.section(
-            self.recipe['new_library']['name'])
-        while new_library.refreshing:
-            time.sleep(5)
+        time.sleep(10)
+        
+        start_time = time.time()
+        last_scan_time = start_time
+        
+        while True:
             new_library = self.plex.server.library.section(
                 self.recipe['new_library']['name'])
+            
+            # If we expect a specific count, wait for it regardless of refreshing status
+            if expected_count is not None:
+                item_count = len(new_library.all())
+                if item_count >= expected_count:
+                    break
+                
+                current_time = time.time()
+                if current_time - start_time > 300:  # 5 minute timeout
+                    logs.warning(u"Timed out waiting for library to contain {expected} items.".format(
+                        expected=expected_count))
+                    break
+                    
+                if current_time - last_scan_time > 30: # Re-trigger scan every 30s
+                    logs.info(u"Re-triggering library scan...")
+                    new_library.update()
+                    last_scan_time = current_time
+                    
+                logs.info(u"Waiting for library to contain {expected} items (current: {current})...".format(
+                    expected=expected_count, current=item_count))
+            # Otherwise fall back to refreshing status
+            elif not new_library.refreshing:
+                break
+                
+            time.sleep(5)
 
         # Retrieve a list of items from the new library
         logs.info(u"Retrieving a list of items from the '{library}' library in "
@@ -490,7 +536,7 @@ class Recipe():
         return new_library, new_library.all()
 
     def _modify_sort_titles_and_cleanup(self, item_list, new_library,
-                                        sort_only=False):
+                                        sort_only=False, expected_count=None):
         if self.recipe['new_library']['sort']:
             logs.info(u"Setting the sort titles for the '{}' library".format(
                 self.recipe['new_library']['name']))
@@ -536,7 +582,7 @@ class Recipe():
                     self.library_type,
                     self.recipe['new_library']['sort_title']['format'],
                     self.recipe['new_library']['sort_title']['visible'])
-        all_new_items = self._cleanup_new_library(new_library=new_library)
+        all_new_items = self._cleanup_new_library(new_library=new_library, expected_count=expected_count)
         return all_new_items
 
     def _remove_old_items_from_library(self, unmatched_items):
@@ -649,18 +695,43 @@ class Recipe():
             logs.info(u"{title} ({year})".format(title=item.title,
                                                  year=item.year))
 
-    def _cleanup_new_library(self, new_library):
+    def _cleanup_new_library(self, new_library, expected_count=None):
         # Scan the library to clean up the deleted items
         logs.info(u"Scanning the '{library}' library...".format(
             library=self.recipe['new_library']['name']))
         new_library.update()
         time.sleep(10)
-        new_library = self.plex.server.library.section(
-            self.recipe['new_library']['name'])
-        while new_library.refreshing:
-            time.sleep(5)
+        
+        start_time = time.time()
+        last_scan_time = start_time
+        
+        while True:
             new_library = self.plex.server.library.section(
                 self.recipe['new_library']['name'])
+                
+            if expected_count is not None:
+                item_count = len(new_library.all())
+                if item_count == expected_count:
+                    break
+                    
+                current_time = time.time()
+                if current_time - start_time > 300:  # 5 minute timeout
+                    logs.warning(u"Timed out waiting for library to contain {expected} items.".format(
+                        expected=expected_count))
+                    break
+                    
+                if current_time - last_scan_time > 30: # Re-trigger scan every 30s
+                    logs.info(u"Re-triggering library scan...")
+                    new_library.update()
+                    last_scan_time = current_time
+                    
+                logs.info(u"Waiting for library to contain {expected} items (current: {current})...".format(
+                    expected=expected_count, current=item_count))
+            elif not new_library.refreshing:
+                break
+                
+            time.sleep(5)
+            
         new_library.emptyTrash()
         return new_library.all()
 
@@ -707,15 +778,15 @@ class Recipe():
         else:
             # Start library process
             # Create symlinks for all items in your library on the trakt watched
-            self._create_symbolic_links(matching_items=matching_items, matching_total=matching_total)
+            count = self._create_symbolic_links(matching_items=matching_items, matching_total=matching_total)
             # Post-process new library
             logs.info(u"Creating the '{}' library in Plex...".format(
                 self.recipe['new_library']['name']))
-            new_library, all_new_items = self._verify_new_library_and_get_items(create_if_not_found=True)
+            new_library, all_new_items = self._verify_new_library_and_get_items(create_if_not_found=True, expected_count=len(matching_items))
             self.dest_map.add_items(all_new_items)
             # Modify the sort titles
             all_new_items = self._modify_sort_titles_and_cleanup(
-                    item_list, new_library, sort_only=False)
+                    item_list, new_library, sort_only=False, expected_count=len(matching_items))
             return missing_items, len(all_new_items)
 
     def _run_sort_only(self):
