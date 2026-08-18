@@ -107,6 +107,24 @@ Trakt (only if you already hold a client_id)::
 
     https://api.trakt.tv/movies/trending?limit=50
 
+Checking a source without a Plex server
+---------------------------------------
+
+The list sources are independent of Plex, so you can verify credentials and
+inspect what a list actually returns before wiring it into a recipe:
+
+.. code-block:: shell
+
+    python3 plexlibrary --check-source 'https://api.mdblist.com/lists/adamosborne01/imdb-top-250/items?limit=250'
+    python3 plexlibrary --check-source 'https://api.mdblist.com/lists/official/moviemeter/items' --type tv
+    python3 plexlibrary --check-source 'https://api.themoviedb.org/3/trending/movie/week?limit=20'
+
+This only talks to the list API. No Plex server is contacted, nothing is
+written and no symlinks are touched. It prints the first few items with their
+IMDb/TMDb/TheTVDB ids and reports id coverage, since those ids are what Plex
+matching depends on. It exits non-zero if the list is empty or if any item
+carries no usable id.
+
 Usage
 -----
 In the base directory, run:

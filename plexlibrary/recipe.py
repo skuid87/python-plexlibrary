@@ -187,6 +187,72 @@ class IdMap():
         return items
 
 
+def build_sources(config, trakt_oauth=False):
+    """Construct the list-source providers a config can support.
+
+    Deliberately free of any Plex dependency, so source lists can be fetched
+    and inspected without a server (see --check-source).
+    """
+    sources = {'trakt': None, 'tmdb': None, 'mdblist': None,
+               'tmdb_source': None, 'imdb': None}
+
+    trakt_config = config.get('trakt') or {}
+    if trakt_config.get('username') and traktutils:
+        sources['trakt'] = traktutils.Trakt(
+            trakt_config['username'],
+            client_id=trakt_config.get('client_id', ''),
+            client_secret=trakt_config.get('client_secret', ''),
+            oauth_token=trakt_config.get('oauth_token', ''),
+            oauth=trakt_oauth,
+            config=config)
+
+    tmdb_config = config.get('tmdb') or {}
+    if tmdb_config.get('api_key'):
+        sources['tmdb'] = tmdb.TMDb(tmdb_config['api_key'],
+                                    cache_file=tmdb_config.get('cache_file'))
+
+    mdblist_config = config.get('mdblist') or {}
+    if mdblist_config.get('api_key'):
+        sources['mdblist'] = mdblistutils.MDBList(mdblist_config['api_key'])
+
+    if sources['tmdb']:
+        sources['tmdb_source'] = tmdbutils.TMDbSource(sources['tmdb'])
+    sources['imdb'] = imdbutils.IMDb(sources['tmdb'])
+
+    return sources
+
+
+def resolve_source(url, sources):
+    """Pick the provider for a source list URL.
+
+    Raises with an actionable message rather than falling through to a silent
+    no-op, which is how a dead source used to wipe a library.
+    """
+    if 'api.trakt.tv' in url:
+        if not sources.get('trakt'):
+            raise SourceListError(
+                "'{}' needs Trakt, but no Trakt credentials are configured. "
+                "Note that Trakt has restricted new API keys to VIP accounts; "
+                "MDBList mirrors most Trakt lists on a free key.".format(url))
+        return sources['trakt']
+    if mdblistutils.MDBList.handles(url):
+        if not sources.get('mdblist'):
+            raise SourceListError(
+                "'{}' needs MDBList, but no API key is configured. Get a free "
+                "key from https://mdblist.com/preferences and add it to "
+                "config.yml under mdblist: api_key".format(url))
+        return sources['mdblist']
+    if tmdbutils.TMDbSource.handles(url):
+        if not sources.get('tmdb_source'):
+            raise SourceListError(
+                "'{}' needs TMDb, but no API key is configured. Add one to "
+                "config.yml under tmdb: api_key".format(url))
+        return sources['tmdb_source']
+    if 'imdb.com' in url:
+        return sources['imdb']
+    raise SourceListError("Unsupported source list: {url}".format(url=url))
+
+
 class Recipe():
     plex = None
     trakt = None
@@ -219,30 +285,17 @@ class Recipe():
         self.plex = plexutils.Plex(self.config['plex']['baseurl'],
                                    self.config['plex']['token'])
 
-        trakt_config = self.config.get('trakt') or {}
-        if trakt_config.get('username') and traktutils:
-            self.trakt = traktutils.Trakt(
-                trakt_config['username'],
-                client_id=trakt_config.get('client_id', ''),
-                client_secret=trakt_config.get('client_secret', ''),
-                oauth_token=trakt_config.get('oauth_token', ''),
-                oauth=self.recipe.get('trakt_oauth', False),
-                config=self.config)
-            if self.trakt.oauth_token:
-                self.config['trakt']['oauth_token'] = self.trakt.oauth_token
+        sources = build_sources(
+            self.config, trakt_oauth=self.recipe.get('trakt_oauth', False))
+        self.trakt = sources['trakt']
+        self.tmdb = sources['tmdb']
+        self.mdblist = sources['mdblist']
+        self.tmdb_source = sources['tmdb_source']
+        self.imdb = sources['imdb']
+        self._sources = sources
 
-        tmdb_config = self.config.get('tmdb') or {}
-        if tmdb_config.get('api_key'):
-            self.tmdb = tmdb.TMDb(
-                tmdb_config['api_key'],
-                cache_file=tmdb_config.get('cache_file'))
-
-        mdblist_config = self.config.get('mdblist') or {}
-        if mdblist_config.get('api_key'):
-            self.mdblist = mdblistutils.MDBList(mdblist_config['api_key'])
-
-        self.tmdb_source = tmdbutils.TMDbSource(self.tmdb) if self.tmdb else None
-        self.imdb = imdbutils.IMDb(self.tmdb)
+        if self.trakt and self.trakt.oauth_token:
+            self.config['trakt']['oauth_token'] = self.trakt.oauth_token
 
         self.source_map = IdMap(matching_only=True,
                                 cache_file=self.config.get('guid_cache_file'))
@@ -257,35 +310,7 @@ class Recipe():
         return self.recipe.get('new_library') or {}
 
     def _source_for(self, url):
-        """Pick the provider for a source list URL.
-
-        Raises with an actionable message rather than falling through to a
-        silent no-op, which is how a dead source used to wipe a library.
-        """
-        if 'api.trakt.tv' in url:
-            if not self.trakt:
-                raise SourceListError(
-                    "'{}' needs Trakt, but no Trakt credentials are "
-                    "configured. Note that Trakt has restricted new API keys "
-                    "to VIP accounts; MDBList mirrors most Trakt lists on a "
-                    "free key.".format(url))
-            return self.trakt
-        if mdblistutils.MDBList.handles(url):
-            if not self.mdblist:
-                raise SourceListError(
-                    "'{}' needs MDBList, but no API key is configured. Get a "
-                    "free key from https://mdblist.com/preferences and add it "
-                    "to config.yml under mdblist: api_key".format(url))
-            return self.mdblist
-        if tmdbutils.TMDbSource.handles(url):
-            if not self.tmdb_source:
-                raise SourceListError(
-                    "'{}' needs TMDb, but no API key is configured. Add one "
-                    "to config.yml under tmdb: api_key".format(url))
-            return self.tmdb_source
-        if 'imdb.com' in url:
-            return self.imdb
-        raise SourceListError("Unsupported source list: {url}".format(url=url))
+        return resolve_source(url, self._sources)
 
     def _get_source_lists(self):
         item_list = []  # TODO Replace with dict, scrap item_ids?
@@ -316,7 +341,7 @@ class Recipe():
                     self._list_settings().get('name', 'the destination')))
 
         if self.recipe['weighted_sorting']['enabled']:
-            if self.config['tmdb']['api_key']:
+            if (self.config.get('tmdb') or {}).get('api_key'):
                 logs.info(u"Getting data from TMDb to add weighted sorting...")
                 item_list = self.weighted_sorting(item_list)
             else:
