@@ -32,6 +32,10 @@ except ImportError:  # pragma: no cover
     traktutils = None
 
 
+# How many new guid entries to accumulate before writing the cache out.
+CACHE_FLUSH_INTERVAL = 250
+
+
 class IdMap():
     def __init__(self, matching_only=False, cache_file=None,
                  match_imdb=None, match_tmdb=None, match_tvdb=None):
@@ -43,8 +47,10 @@ class IdMap():
         self.cache_file = resolve_cache_path(
             cache_file, '~/.cache/plexlibrary/plex_guid_cache.json')
         self.cache = None
+        self._cache = None
         self.cache_section = None
         self.cache_section_id = None
+        self._pending = 0
         if matching_only:
             self.match_imdb = match_imdb or []
             self.match_tmdb = match_tmdb or []
@@ -57,6 +63,7 @@ class IdMap():
     def add_items(self, items):
         while items:
             self.add_item(items.pop(0))  # Pop to save on memory
+        self.flush()
 
     def add_item(self, item):
         if item.guid.startswith('plex'):
@@ -115,7 +122,7 @@ class IdMap():
                 'guids': guids,
                 'updatedAt': ts
             }
-            self._save_cache()
+            self._touch_cache()
         if not guids:
             guids = [guid.id for guid in item.guids]
             if guids:
@@ -123,12 +130,18 @@ class IdMap():
                     'guids': guids,
                     'updatedAt': ts
                 }
-                self._save_cache()
+                self._touch_cache()
         return guids
 
     def _load_cache(self, section_id):
-        if self.cache and self.cache_section_id == section_id:
+        # `is not None`, not truthiness: an empty section cache is a perfectly
+        # good cache, and treating it as absent re-read the whole file from
+        # disk on every item until the first entry landed.
+        if self.cache is not None and self.cache_section_id == section_id:
             return
+        # Switching sections replaces self.cache, so anything still pending
+        # has to reach disk first or it is lost.
+        self.flush()
         if not os.path.isfile(self.cache_file):
             with open(self.cache_file, 'w') as f:
                 json.dump(dict(), f)
@@ -142,10 +155,45 @@ class IdMap():
 
         self.cache_section_id = section_id
 
+    def _touch_cache(self):
+        """Record a change, writing out once enough have accumulated.
+
+        Saving on every single item meant rewriting the whole JSON file per
+        library item: quadratic work that fell entirely on cold-cache runs,
+        which are already the slow ones. Batching keeps the write count
+        proportional to the number of items divided by the flush interval,
+        while still checkpointing often enough that an interrupted run keeps
+        most of its progress.
+        """
+        self._pending += 1
+        if self._pending >= CACHE_FLUSH_INTERVAL:
+            self.flush()
+
+    def flush(self):
+        """Write pending cache changes to disk."""
+        if not self._pending:
+            return
+        self._save_cache()
+        self._pending = 0
+
     def _save_cache(self):
+        if self._cache is None or self.cache_section_id is None:
+            return
         self._cache[self.cache_section_id] = self.cache
-        with open(self.cache_file, 'w') as f:
-            json.dump(self._cache, f)
+        # Write and rename, so an interrupted or failed write cannot leave a
+        # truncated cache file behind; the previous one stays intact until
+        # the new one is complete.
+        tmp_path = "{}.tmp".format(self.cache_file)
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(self._cache, f)
+            os.replace(tmp_path, self.cache_file)
+        except OSError as e:
+            logs.warning("Unable to write the guid cache ({})".format(e))
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     def _add_id(self, guid, item):
         try:
