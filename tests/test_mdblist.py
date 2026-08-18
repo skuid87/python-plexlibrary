@@ -128,6 +128,32 @@ class ItemMappingTest(unittest.TestCase):
         self.assertIn('tt2049403', ids)
         self.assertIn('tmdb917496', ids)
 
+    def test_movie_keeps_tvdb_id_when_the_api_supplies_one(self):
+        """Live payloads carry a tvdb_id for movies too; it used to be
+        dropped, discarding a third id the matcher could have tried."""
+        live_movie = {
+            "adult": 0, "country": "us", "id": 969681,
+            "ids": {"imdb": "tt22084616", "mdblist": "32uh4",
+                    "tmdb": 969681, "tvdb": 135896},
+            "imdb_id": "tt22084616", "language": "en", "mediatype": "movie",
+            "rank": 1, "release_date": "2026-07-29", "release_year": 2026,
+            "runtime": 145, "status": "released",
+            "title": "Spider-Man: Brand New Day", "tvdb_id": 135896,
+        }
+        self.m._get = lambda path, params: ({"movies": [live_movie]}, {})
+        items, ids = self.m.add_items(
+            'movie', "https://api.mdblist.com/lists/a/b/items", [], [], 0)
+        self.assertEqual(items[0]['tvdb_id'], '135896')
+        self.assertIn('tvdb135896', ids)
+
+    def test_release_date_is_read_from_the_live_field_name(self):
+        live_movie = {"id": 1, "imdb_id": "tt1", "title": "X",
+                      "release_date": "2026-07-29", "release_year": 2026}
+        self.m._get = lambda path, params: ({"movies": [live_movie]}, {})
+        items, _ = self.m.add_items(
+            'movie', "https://api.mdblist.com/lists/a/b/items", [], [], 0)
+        self.assertEqual(str(items[0]['release_date']), '2026-07-29')
+
     def test_show_carries_tvdb_id(self):
         items, _ = self.m.add_items(
             'tv', "https://api.mdblist.com/lists/a/b/items", [], [], 0)

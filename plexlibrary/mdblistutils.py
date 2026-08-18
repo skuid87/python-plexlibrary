@@ -230,9 +230,11 @@ class MDBList(object):
                 'tmdb_id': str(tmdb_id) if tmdb_id else None,
                 'title': entry.get('title'),
                 'year': year,
+                # MDBList returns TheTVDB ids for movies too. Keeping them
+                # costs nothing and gives the matcher a third id to try, for
+                # libraries whose agent supplies tvdb guids.
+                'tvdb_id': str(tvdb_id) if tvdb_id else None,
             }
-            if item_type == 'tv':
-                item['tvdb_id'] = str(tvdb_id) if tvdb_id else None
             if release_date:
                 item['release_date'] = release_date
 
