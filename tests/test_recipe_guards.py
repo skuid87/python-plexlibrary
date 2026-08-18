@@ -155,3 +155,58 @@ class StaleLinkTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LegacyConfigCompatibilityTest(unittest.TestCase):
+    """A config.yml written for the old version must keep working.
+
+    Existing installs have a `trakt` section with now-revoked credentials, a
+    `tvdb` section for the module that has since been removed, and /tmp cache
+    paths. None of that should break a run, and in particular a stale Trakt
+    username must not trigger an auth handshake for a recipe that doesn't use
+    Trakt -- that could block a cron run on an interactive PIN prompt.
+    """
+
+    LEGACY = {
+        'guid_cache_file': '/tmp/plex_guid_cache.json',
+        'plex': {'baseurl': 'http://localhost:32400', 'token': 'x'},
+        'trakt': {'username': 'someone', 'client_id': 'revoked',
+                  'client_secret': 'revoked', 'oauth_token': ''},
+        'tmdb': {'api_key': 'key', 'cache_file': '/tmp/tmdb_details.shelve'},
+        'tvdb': {'username': 'someone', 'api_key': 'k', 'user_key': 'k'},
+    }
+
+    def _config(self, data):
+        import config as config_module
+
+        class FakeConfig(config_module.ConfigParser):
+            def __init__(self, payload):
+                self.data = payload
+        return FakeConfig(data)
+
+    def test_legacy_config_still_validates(self):
+        self.assertTrue(self._config(dict(self.LEGACY)).validate())
+
+    def test_removed_tvdb_section_is_ignored_not_fatal(self):
+        sources = recipe_module.build_sources(self._config(dict(self.LEGACY)))
+        self.assertIsNotNone(sources['tmdb'])
+
+    def test_trakt_is_not_constructed_until_a_trakt_url_appears(self):
+        sources = recipe_module.build_sources(self._config(dict(self.LEGACY)))
+        self.assertIsNone(sources['trakt'])
+
+    def test_non_trakt_urls_never_trigger_trakt_auth(self):
+        sources = recipe_module.build_sources(self._config(dict(self.LEGACY)))
+
+        def explode():
+            raise AssertionError("Trakt auth ran when it should not have")
+        sources['trakt_factory'] = explode
+
+        resolve_source("https://api.themoviedb.org/3/movie/popular", sources)
+        resolve_source("https://api.mdblist.com/lists/a/b/items",
+                       dict(sources, mdblist='MDB'))
+
+    def test_legacy_tmp_cache_paths_are_honoured(self):
+        sources = recipe_module.build_sources(self._config(dict(self.LEGACY)))
+        self.assertEqual(sources['tmdb'].cache_file,
+                         '/tmp/tmdb_details.shelve')

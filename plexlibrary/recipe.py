@@ -193,18 +193,23 @@ def build_sources(config, trakt_oauth=False):
     Deliberately free of any Plex dependency, so source lists can be fetched
     and inspected without a server (see --check-source).
     """
-    sources = {'trakt': None, 'tmdb': None, 'mdblist': None,
-               'tmdb_source': None, 'imdb': None}
+    sources = {'trakt': None, 'trakt_factory': None, 'tmdb': None,
+               'mdblist': None, 'tmdb_source': None, 'imdb': None}
 
+    # Trakt is constructed lazily. Building it runs an auth handshake that
+    # can block on an interactive PIN prompt, which has no business happening
+    # during a cron run of a recipe that doesn't even use Trakt.
     trakt_config = config.get('trakt') or {}
     if trakt_config.get('username') and traktutils:
-        sources['trakt'] = traktutils.Trakt(
-            trakt_config['username'],
-            client_id=trakt_config.get('client_id', ''),
-            client_secret=trakt_config.get('client_secret', ''),
-            oauth_token=trakt_config.get('oauth_token', ''),
-            oauth=trakt_oauth,
-            config=config)
+        def make_trakt():
+            return traktutils.Trakt(
+                trakt_config['username'],
+                client_id=trakt_config.get('client_id', ''),
+                client_secret=trakt_config.get('client_secret', ''),
+                oauth_token=trakt_config.get('oauth_token', ''),
+                oauth=trakt_oauth,
+                config=config)
+        sources['trakt_factory'] = make_trakt
 
     tmdb_config = config.get('tmdb') or {}
     if tmdb_config.get('api_key'):
@@ -229,6 +234,9 @@ def resolve_source(url, sources):
     no-op, which is how a dead source used to wipe a library.
     """
     if 'api.trakt.tv' in url:
+        if not sources.get('trakt') and sources.get('trakt_factory'):
+            # Only now does the Trakt auth handshake actually run
+            sources['trakt'] = sources['trakt_factory']()
         if not sources.get('trakt'):
             raise SourceListError(
                 "'{}' needs Trakt, but no Trakt credentials are configured. "
@@ -287,15 +295,15 @@ class Recipe():
 
         sources = build_sources(
             self.config, trakt_oauth=self.recipe.get('trakt_oauth', False))
+        # Trakt is built on first use, so this stays None unless a recipe
+        # actually asks for a Trakt list. traktutils writes any refreshed
+        # oauth_token back to the config itself.
         self.trakt = sources['trakt']
         self.tmdb = sources['tmdb']
         self.mdblist = sources['mdblist']
         self.tmdb_source = sources['tmdb_source']
         self.imdb = sources['imdb']
         self._sources = sources
-
-        if self.trakt and self.trakt.oauth_token:
-            self.config['trakt']['oauth_token'] = self.trakt.oauth_token
 
         self.source_map = IdMap(matching_only=True,
                                 cache_file=self.config.get('guid_cache_file'))
