@@ -31,10 +31,18 @@ The list sources this project can read have changed considerably:
   Still supported if you already hold a working ``client_id``, otherwise use
   MDBList, which mirrors most Trakt lists.
 
-* **IMDb charts** *(no longer usable)* — IMDb serves scripted requests a
-  bot-protection challenge rather than the chart, so scraping cannot work.
-  Use the MDBList mirrors instead. The recipe will now fail with an explicit
-  error rather than quietly building an empty library.
+* **IMDb charts** — the chart *pages* cannot be scraped (IMDb serves scripted
+  requests a bot-protection challenge), but the charts themselves are served
+  as JSON by the GraphQL endpoint IMDb's own site uses, which is the route
+  Kometa takes for its IMDb defaults. No API key needed. That endpoint is
+  undocumented and subject to IMDb's data-use terms, which its responses
+  state as: *"Public, commercial, and/or non-private use of the IMDb data
+  provided by this API is not allowed. For limited non-commercial use of IMDb
+  data and the associated requirements see* `help.imdb.com
+  <https://help.imdb.com/article/imdb/general-information/can-i-use-imdb-data-in-my-software/G5JTRESSHJBBHTGX>`_ *"*.
+  MDBList mirrors several of the same charts if you would rather not depend
+  on it. Non-chart imdb.com URLs still fail with an explicit error rather
+  than quietly building an empty library.
 
 * **TheTVDB** *(removed)* — the v3 API was shut down and v4 is paid. TheTVDB
   ids are now resolved through TMDb instead.
@@ -98,6 +106,15 @@ MDBList::
 ``limit`` is the total number of items to collect. ``page_size`` caps how many
 items each request asks for (max 1000) and exists mainly to exercise cursor
 pagination, since most lists fit in a single page.
+
+IMDb charts::
+
+    imdb://chart/top_movies              # IMDb Top 250
+    imdb://chart/top_indian?limit=100    # also top_english/tamil/telugu/malayalam
+    imdb://chart/popular_movies          # IMDb MovieMeter
+    imdb://chart/box_office              # weekend box office
+    imdb://chart/top_shows               # with library_type: tv
+    https://www.imdb.com/chart/top/      # website URLs map to the same charts
 
 TMDb::
 

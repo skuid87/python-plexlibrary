@@ -1,0 +1,69 @@
+# IMDb Top 250, straight from IMDb's own charts.
+#
+# The chart pages can't be scraped (AWS WAF bot protection), but the same
+# charts are served as JSON by the GraphQL endpoint IMDb's own site uses --
+# which is how Kometa sources its IMDb chart defaults. No API key required.
+#
+# NOTE: that endpoint is undocumented, so IMDb can change or close it off
+# without notice, and every response carries this disclaimer:
+#
+#   "Public, commercial, and/or non-private use of the IMDb data provided by
+#    this API is not allowed. For limited non-commercial use of IMDb data and
+#    the associated requirements see https://help.imdb.com/article/imdb/
+#    general-information/can-i-use-imdb-data-in-my-software/G5JTRESSHJBBHTGX"
+#
+# If you would rather not depend on it, movies_imdb_top_250_mdblist.yml
+# reads a mirror of the same chart from MDBList on a free key.
+#
+# Available charts (movie): top_movies, top_english, top_indian, top_tamil,
+#   top_telugu, top_malayalam, popular_movies, lowest_rated, box_office
+# Available charts (tv):    top_shows, popular_shows
+#
+# The old website URLs work too and map to the same charts, so existing
+# recipes need no editing:
+#   https://www.imdb.com/chart/top/        -> top_movies
+#   https://www.imdb.com/chart/moviemeter/ -> popular_movies
+#   https://www.imdb.com/chart/toptv/      -> top_shows
+
+library_type: 'movie'
+
+source_list_urls:
+  - 'imdb://chart/top_movies'
+
+# Source library details
+source_libraries:
+  - name: 'Movies'
+    folders:
+      - '/path/to/Movies'
+
+# New playlist details
+new_playlist:
+  name: 'Movies - IMDb Top 250'
+  max_age: 0
+  max_count: 250
+  remove_from_playlist: true
+  share_to_all: false
+
+# New library details
+new_library:
+  name: 'Movies - IMDb Top 250'
+  folder: '/path/to/symlink/supporting/filesystem/Movies - IMDb Top 250/'
+  sort: true
+  sort_title:
+    format: '{number}. {title}'
+    visible: false
+    absolute: false
+  max_age: 0
+  max_count: 250
+  remove_from_library: true
+
+# Keep the chart's own ordering
+weighted_sorting:
+  enabled: false
+  better_release_date: false
+  weights:
+    index: 1.0
+    vote: 0.0
+    age: 0.0
+    random: 0.0
+    genre_bias: {}

@@ -59,7 +59,7 @@ class DispatchTest(unittest.TestCase):
 
     def test_known_sources_route_to_their_provider(self):
         sources = {'mdblist': 'MDB', 'tmdb_source': 'TMDB', 'imdb': 'IMDB',
-                   'trakt': 'TRAKT'}
+                   'imdb_chart': 'IMDB_CHART', 'trakt': 'TRAKT'}
         self.assertEqual(
             resolve_source("https://api.mdblist.com/lists/a/b/items", sources),
             'MDB')
@@ -67,10 +67,24 @@ class DispatchTest(unittest.TestCase):
             resolve_source("https://api.themoviedb.org/3/movie/popular",
                            sources), 'TMDB')
         self.assertEqual(
-            resolve_source("https://www.imdb.com/chart/top/", sources), 'IMDB')
-        self.assertEqual(
             resolve_source("https://api.trakt.tv/movies/trending", sources),
             'TRAKT')
+
+    def test_chart_urls_go_to_the_graphql_source_not_the_scraper(self):
+        """The chart pages can't be scraped, but the same charts are served
+        as JSON, so those URLs are routed to the working source."""
+        sources = {'imdb': 'IMDB', 'imdb_chart': 'IMDB_CHART'}
+        for url in ("https://www.imdb.com/chart/top/",
+                    "https://www.imdb.com/chart/moviemeter/",
+                    "imdb://chart/top_movies"):
+            self.assertEqual(resolve_source(url, sources), 'IMDB_CHART', url)
+
+    def test_non_chart_imdb_urls_still_go_to_the_scraper(self):
+        """Which fails loudly, as it should."""
+        sources = {'imdb': 'IMDB', 'imdb_chart': 'IMDB_CHART'}
+        self.assertEqual(
+            resolve_source("https://www.imdb.com/list/ls055386972/", sources),
+            'IMDB')
 
 
 class EmptyListGuardTest(unittest.TestCase):

@@ -194,7 +194,8 @@ def build_sources(config, trakt_oauth=False):
     and inspected without a server (see --check-source).
     """
     sources = {'trakt': None, 'trakt_factory': None, 'tmdb': None,
-               'mdblist': None, 'tmdb_source': None, 'imdb': None}
+               'mdblist': None, 'tmdb_source': None, 'imdb': None,
+               'imdb_chart': None}
 
     # Trakt is constructed lazily. Building it runs an auth handshake that
     # can block on an interactive PIN prompt, which has no business happening
@@ -223,6 +224,7 @@ def build_sources(config, trakt_oauth=False):
     if sources['tmdb']:
         sources['tmdb_source'] = tmdbutils.TMDbSource(sources['tmdb'])
     sources['imdb'] = imdbutils.IMDb(sources['tmdb'])
+    sources['imdb_chart'] = imdbutils.IMDbChart(sources['tmdb'])
 
     return sources
 
@@ -256,6 +258,8 @@ def resolve_source(url, sources):
                 "'{}' needs TMDb, but no API key is configured. Add one to "
                 "config.yml under tmdb: api_key".format(url))
         return sources['tmdb_source']
+    if imdbutils.IMDbChart.handles(url):
+        return sources['imdb_chart']
     if 'imdb.com' in url:
         return sources['imdb']
     raise SourceListError("Unsupported source list: {url}".format(url=url))
