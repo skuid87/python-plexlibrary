@@ -46,7 +46,59 @@ def list_recipes(directory=None):
         print("    {}".format(name))
 
 
-def check_source(url, library_type='movie', max_age=0, config_file=None):
+def _print_raw_exchange(source, url, library_type):
+    """Show the parameters actually sent and the first item as returned.
+
+    Filters are passed through to the upstream API verbatim, so when one
+    appears to do nothing this is the only way to tell whether we sent it
+    wrong or the API ignored it.
+    """
+    import json
+
+    if not hasattr(source, '_get'):
+        print("(raw output is only available for MDBList sources)\n")
+        return
+
+    original_get = source._get
+    captured = {}
+
+    def recording_get(path, params):
+        data, headers = original_get(path, params)
+        if 'params' not in captured:
+            captured['path'] = path
+            captured['params'] = dict(params)
+            captured['data'] = data
+        return data, headers
+
+    source._get = recording_get
+    try:
+        source.add_items(library_type, url, [], [], 0)
+    except Exception as e:
+        print("request failed: {}".format(e))
+    finally:
+        source._get = original_get
+
+    if not captured:
+        print("(no request was made)\n")
+        return
+
+    print("--- raw exchange " + "-" * 62)
+    print("path          : {}".format(captured['path']))
+    print("params sent   : {}".format(
+        {k: v for k, v in captured['params'].items() if k != 'apikey'}))
+    data = captured.get('data') or {}
+    key = 'movies' if library_type == 'movie' else 'shows'
+    entries = (data.get(key) or [])
+    print("keys returned : {}".format(sorted(data.keys())))
+    print("item count    : {}".format(len(entries)))
+    if entries:
+        print("first item as returned by MDBList:")
+        print(json.dumps(entries[0], indent=2, sort_keys=True))
+    print("-" * 79 + "\n")
+
+
+def check_source(url, library_type='movie', max_age=0, config_file=None,
+                 raw=False):
     """Fetch a single source list and report what came back.
 
     Talks only to the list API -- no Plex server is contacted, nothing is
@@ -59,6 +111,9 @@ def check_source(url, library_type='movie', max_age=0, config_file=None):
         source = resolve_source(url, sources)
     except SourceListError as e:
         die(str(e))
+
+    if raw:
+        _print_raw_exchange(source, url, library_type)
 
     print("Source   : {}".format(type(source).__name__))
     print("URL      : {}".format(url))
@@ -147,6 +202,10 @@ def main():
         '--max-age', type=int, default=0, metavar='YEARS',
         help='apply a max_age filter when using --check-source')
     parser.add_argument(
+        '--raw', action='store_true',
+        help='with --check-source, also dump the parameters sent and the '
+             'first item exactly as the API returned it')
+    parser.add_argument(
         '-c', '--config', metavar='PATH',
         help='path to the config file (default: config.yml in the base '
              'directory)')
@@ -163,7 +222,7 @@ def main():
     if args.check_source:
         sys.exit(check_source(args.check_source, library_type=args.type,
                               max_age=args.max_age,
-                              config_file=args.config))
+                              config_file=args.config, raw=args.raw))
 
     if args.recipe not in recipes.get_recipes():
         print("Error: No such recipe")
