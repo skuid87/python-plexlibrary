@@ -76,6 +76,13 @@ class MDBList(object):
         else:
             path = parsed.path
 
+        # `released_to=today` keeps popularity charts usable from cron: those
+        # charts are full of unreleased films, and a hardcoded date goes stale
+        # the day after you write it.
+        for key in ('released_to', 'released_from'):
+            if str(params.get(key, '')).lower() == 'today':
+                params[key] = datetime.date.today().isoformat()
+
         path = path.strip('/')
         if not path:
             raise SourceListError(

@@ -267,3 +267,44 @@ class ErrorMappingTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReleasedFilterTest(unittest.TestCase):
+    """Popularity charts are full of unreleased titles that can never match
+    anything in a library, so `released_to=today` needs to resolve at run
+    time rather than being pinned to whenever the recipe was written."""
+
+    def setUp(self):
+        self.m = MDBList("dummy-key")
+
+    def test_today_resolves_to_the_current_date(self):
+        import datetime
+        _, params, _, _ = self.m._parse_url(
+            "https://api.mdblist.com/lists/a/b/items?released_to=today")
+        self.assertEqual(params['released_to'],
+                         datetime.date.today().isoformat())
+
+    def test_today_is_case_insensitive_and_works_for_released_from(self):
+        import datetime
+        today = datetime.date.today().isoformat()
+        _, params, _, _ = self.m._parse_url(
+            "https://api.mdblist.com/lists/a/b/items?released_from=TODAY")
+        self.assertEqual(params['released_from'], today)
+
+    def test_explicit_dates_are_passed_through_untouched(self):
+        _, params, _, _ = self.m._parse_url(
+            "https://api.mdblist.com/lists/a/b/items?released_to=2024-01-31")
+        self.assertEqual(params['released_to'], '2024-01-31')
+
+    def test_filter_reaches_the_api(self):
+        sent = {}
+
+        def fake_get(path, params):
+            sent.update(params)
+            return SPEC_EXAMPLE, {}
+        self.m._get = fake_get
+        self.m.add_items(
+            'movie',
+            "https://api.mdblist.com/lists/a/b/items?released_to=today",
+            [], [], 0)
+        self.assertIn('released_to', sent)
