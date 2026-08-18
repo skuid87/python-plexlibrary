@@ -187,6 +187,34 @@ class IdMap():
         return items
 
 
+# Plex imports large libraries slowly: a first run of a 250-item chart can
+# take well over five minutes just to pull metadata. Wait on *progress*
+# rather than a fixed clock, so a slow-but-working scan is never abandoned
+# while a genuinely stuck one still gives up.
+SCAN_STALL_TIMEOUT = 180   # seconds with no new items before giving up
+SCAN_MAX_WAIT = 3600       # absolute backstop
+SCAN_RESCAN_INTERVAL = 30  # how often to re-trigger the Plex scan
+SCAN_POLL_INTERVAL = 5
+
+
+def scan_wait_verdict(count, expected, exact, elapsed, since_progress):
+    """Decide whether to keep waiting for Plex to finish scanning.
+
+    Pure so the policy can be tested without sleeping. Returns one of
+    'done', 'wait', 'stalled' or 'timeout'.
+    """
+    if expected is None:
+        return 'done'
+    if (count == expected) if exact else (count >= expected):
+        return 'done'
+    if elapsed > SCAN_MAX_WAIT:
+        return 'timeout'
+    if since_progress > SCAN_STALL_TIMEOUT:
+        return 'stalled'
+    return 'wait'
+
+
+
 def build_sources(config, trakt_oauth=False):
     """Construct the list-source providers a config can support.
 
@@ -613,6 +641,64 @@ class Recipe():
         except Exception:
             return 0
 
+    def _wait_for_scan(self, expected_count, exact=False):
+        """Poll the destination library until Plex has scanned everything in.
+
+        Gives up only when the item count stops moving, not on a fixed
+        deadline: importing a few hundred items can take far longer than any
+        timeout worth hardcoding, and abandoning a scan that is still making
+        progress leaves items without sort titles.
+        """
+        name = self.recipe['new_library']['name']
+        start = time.time()
+        last_progress = start
+        last_scan = start
+        last_count = None
+
+        while True:
+            library = self.plex.server.library.section(name)
+
+            if expected_count is None:
+                if not library.refreshing:
+                    return library
+                time.sleep(SCAN_POLL_INTERVAL)
+                continue
+
+            count = len(library.all())
+            now = time.time()
+            if count != last_count:
+                last_progress = now
+                last_count = count
+
+            verdict = scan_wait_verdict(count, expected_count, exact,
+                                        now - start, now - last_progress)
+            if verdict == 'done':
+                return library
+            if verdict == 'stalled':
+                logs.warning(
+                    u"Gave up waiting for the '{}' library to reach {} items; "
+                    u"it stopped at {} and made no progress for {}s. Items "
+                    u"scanned in later will be missing sort titles until the "
+                    u"recipe is run again (-s is enough).".format(
+                        name, expected_count, count, SCAN_STALL_TIMEOUT))
+                return library
+            if verdict == 'timeout':
+                logs.warning(
+                    u"Gave up waiting for the '{}' library after {} minutes "
+                    u"({} of {} items).".format(
+                        name, SCAN_MAX_WAIT // 60, count, expected_count))
+                return library
+
+            if now - last_scan > SCAN_RESCAN_INTERVAL:
+                logs.info(u"Re-triggering library scan...")
+                library.update()
+                last_scan = now
+
+            logs.info(u"Waiting for library to contain {expected} items "
+                      u"(current: {current})...".format(
+                          expected=expected_count, current=count))
+            time.sleep(SCAN_POLL_INTERVAL)
+
     def _verify_new_library_and_get_items(self, create_if_not_found=False, expected_count=None):
         # Check if the new library exists in Plex
         try:
@@ -637,37 +723,7 @@ class Recipe():
         logs.info(u"Waiting for metadata to finish downloading...")
         time.sleep(10)
         
-        start_time = time.time()
-        last_scan_time = start_time
-        
-        while True:
-            new_library = self.plex.server.library.section(
-                self.recipe['new_library']['name'])
-            
-            # If we expect a specific count, wait for it regardless of refreshing status
-            if expected_count is not None:
-                item_count = len(new_library.all())
-                if item_count >= expected_count:
-                    break
-                
-                current_time = time.time()
-                if current_time - start_time > 300:  # 5 minute timeout
-                    logs.warning(u"Timed out waiting for library to contain {expected} items.".format(
-                        expected=expected_count))
-                    break
-                    
-                if current_time - last_scan_time > 30: # Re-trigger scan every 30s
-                    logs.info(u"Re-triggering library scan...")
-                    new_library.update()
-                    last_scan_time = current_time
-                    
-                logs.info(u"Waiting for library to contain {expected} items (current: {current})...".format(
-                    expected=expected_count, current=item_count))
-            # Otherwise fall back to refreshing status
-            elif not new_library.refreshing:
-                break
-                
-            time.sleep(5)
+        new_library = self._wait_for_scan(expected_count, exact=False)
 
         # Retrieve a list of items from the new library
         logs.info(u"Retrieving a list of items from the '{library}' library in "
@@ -856,36 +912,7 @@ class Recipe():
         new_library.update()
         time.sleep(10)
         
-        start_time = time.time()
-        last_scan_time = start_time
-        
-        while True:
-            new_library = self.plex.server.library.section(
-                self.recipe['new_library']['name'])
-                
-            if expected_count is not None:
-                item_count = len(new_library.all())
-                if item_count == expected_count:
-                    break
-                    
-                current_time = time.time()
-                if current_time - start_time > 300:  # 5 minute timeout
-                    logs.warning(u"Timed out waiting for library to contain {expected} items.".format(
-                        expected=expected_count))
-                    break
-                    
-                if current_time - last_scan_time > 30: # Re-trigger scan every 30s
-                    logs.info(u"Re-triggering library scan...")
-                    new_library.update()
-                    last_scan_time = current_time
-                    
-                logs.info(u"Waiting for library to contain {expected} items (current: {current})...".format(
-                    expected=expected_count, current=item_count))
-            elif not new_library.refreshing:
-                break
-                
-            time.sleep(5)
-            
+        new_library = self._wait_for_scan(expected_count, exact=True)
         new_library.emptyTrash()
         return new_library.all()
 

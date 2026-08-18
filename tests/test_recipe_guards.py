@@ -272,3 +272,58 @@ class ExpectedCountTest(unittest.TestCase):
                         return Section()
         r.plex = HasLibrary()
         self.assertEqual(r._current_library_count(), 30)
+
+
+class ScanWaitPolicyTest(unittest.TestCase):
+    """Waiting for Plex to finish scanning.
+
+    A first run of a 250-item chart took over five minutes to import and was
+    abandoned by the old fixed deadline while the count was still climbing
+    (193 -> 210), which left 38 items without sort titles. The policy waits
+    on progress instead.
+    """
+
+    def verdict(self, count, expected, exact=False, elapsed=10,
+                since_progress=0):
+        return recipe_module.scan_wait_verdict(count, expected, exact,
+                                               elapsed, since_progress)
+
+    def test_reaching_the_target_is_done(self):
+        self.assertEqual(self.verdict(250, 250), 'done')
+
+    def test_overshooting_is_done_when_not_exact(self):
+        """After linking, extras are stale items not yet removed."""
+        self.assertEqual(self.verdict(260, 250), 'done')
+
+    def test_overshooting_is_not_done_when_exact(self):
+        """After removal the count must land exactly."""
+        self.assertEqual(self.verdict(260, 250, exact=True), 'wait')
+
+    def test_keeps_waiting_while_still_importing(self):
+        """The exact case that used to time out."""
+        self.assertEqual(
+            self.verdict(210, 247, elapsed=600, since_progress=5), 'wait')
+
+    def test_keeps_waiting_far_beyond_the_old_five_minute_deadline(self):
+        self.assertEqual(
+            self.verdict(240, 250, elapsed=1500, since_progress=10), 'wait')
+
+    def test_gives_up_once_progress_stops(self):
+        self.assertEqual(
+            self.verdict(210, 247, elapsed=600,
+                         since_progress=recipe_module.SCAN_STALL_TIMEOUT + 1),
+            'stalled')
+
+    def test_absolute_backstop(self):
+        self.assertEqual(
+            self.verdict(210, 247,
+                         elapsed=recipe_module.SCAN_MAX_WAIT + 1,
+                         since_progress=1),
+            'timeout')
+
+    def test_no_expected_count_does_not_block(self):
+        self.assertEqual(self.verdict(0, None), 'done')
+
+    def test_stall_timeout_is_longer_than_the_poll_interval(self):
+        self.assertGreater(recipe_module.SCAN_STALL_TIMEOUT,
+                           recipe_module.SCAN_RESCAN_INTERVAL)
