@@ -1,6 +1,10 @@
 # pip install -r requirements.txt
-plexapi
-requests
-trakt
-ruamel.yaml
-lxml
+plexapi>=4.15
+requests>=2.31
+ruamel.yaml>=0.17
+lxml>=4.9
+
+# Optional: only needed if you still hold a working Trakt client_id.
+# `trakt` (PyTrakt) has been unmaintained since 2022; `pytrakt` is the
+# maintained fork and provides the same `trakt` module.
+# pytrakt>=4.4

@@ -26,14 +26,16 @@ class Plex(object):
             'language': 'en',
             'location': folder,
         }
+        # The legacy com.plexapp.agents.* agents were removed by Plex; new
+        # libraries have to be created with the current agents/scanners.
         if library_type == 'movie':
             params['type'] = 'movie'
-            params['agent'] = 'com.plexapp.agents.imdb'
-            params['scanner'] = 'Plex Movie Scanner'
+            params['agent'] = 'tv.plex.agents.movie'
+            params['scanner'] = 'Plex Movie'
         elif library_type == 'tv':
             params['type'] = 'show'
-            params['agent'] = 'com.plexapp.agents.thetvdb'
-            params['scanner'] = 'Plex Series Scanner'
+            params['agent'] = 'tv.plex.agents.series'
+            params['scanner'] = 'Plex TV Series'
         else:
             raise Exception("Library type should be 'movie' or 'tv'")
 

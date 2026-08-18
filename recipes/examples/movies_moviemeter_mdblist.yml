@@ -1,0 +1,65 @@
+# IMDb MovieMeter, sourced from MDBList.
+#
+# This is the direct replacement for the old IMDb chart recipes: IMDb itself
+# is behind AWS WAF bot protection and can no longer be scraped, but MDBList
+# maintains a mirror of the MovieMeter chart and serves it on a free API key
+# (1000 requests/day, https://mdblist.com/preferences).
+#
+# MDBList items already carry IMDb, TMDb and TheTVDB ids, so matching against
+# Plex needs no extra lookups.
+#
+# Verified official list slugs (GET /lists/official):
+#   moviemeter                   IMDb MovieMeter        100 movies / 99 shows
+#   popular                      Popular Movies & Shows  50 movies / 50 shows
+#   justwatch-streaming-charts   JustWatch charts       149 movies / 148 shows
+#
+# These are combined movie+show lists. You don't need to specify which you
+# want: the media type is taken from `library_type` below, so the same URL
+# serves a movie recipe and a tv recipe.
+#
+# There is no official IMDb Top 250 list. To find a user-maintained one:
+#   curl -s "https://api.mdblist.com/lists/search?query=imdb+top+250&apikey=KEY"
+# then use the returned  /lists/{user_name}/{slug}/items  path.
+
+library_type: 'movie'
+
+source_list_urls:
+  - 'https://api.mdblist.com/lists/official/moviemeter/items?limit=100'
+
+# Source library details
+source_libraries:
+  - name: 'Movies'
+    folders:
+      - '/path/to/Movies'
+
+# New playlist details
+new_playlist:
+  name: 'Movies - MovieMeter'
+  max_age: 0
+  max_count: 100
+  remove_from_playlist: true
+  share_to_all: false
+
+# New library details
+new_library:
+  name: 'Movies - MovieMeter'
+  folder: '/path/to/symlink/supporting/filesystem/Movies - MovieMeter/'
+  sort: true
+  sort_title:
+    format: '{number}. {title}'
+    visible: false
+    absolute: false
+  max_age: 0
+  max_count: 100
+  remove_from_library: true
+
+# Keep the chart's own ordering
+weighted_sorting:
+  enabled: false
+  better_release_date: false
+  weights:
+    index: 1.0
+    vote: 0.0
+    age: 0.0
+    random: 0.0
+    genre_bias: {}

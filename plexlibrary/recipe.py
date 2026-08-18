@@ -16,12 +16,20 @@ import plexapi
 
 import plexutils
 import tmdb
-import traktutils
+import tmdbutils
+import mdblistutils
 import imdbutils
-import tvdb
 from config import ConfigParser
 from recipes import RecipeParser
-from utils import Colors, add_years
+from utils import Colors, SourceListError, add_years, resolve_cache_path
+
+try:
+    import traktutils
+except ImportError:  # pragma: no cover
+    # The `trakt` package is unmaintained and Trakt has closed off new API
+    # keys; Trakt support is optional now, so don't let a missing dependency
+    # stop the other sources from working.
+    traktutils = None
 
 
 class IdMap():
@@ -32,10 +40,8 @@ class IdMap():
         self.tmdb = {}
         self.tvdb = {}
         self.matching_only = matching_only
-        if cache_file:
-            self.cache_file = cache_file
-        else:
-            self.cache_file = 'plex_guid_cache.json'
+        self.cache_file = resolve_cache_path(
+            cache_file, '~/.cache/plexlibrary/plex_guid_cache.json')
         self.cache = None
         self.cache_section = None
         self.cache_section_id = None
@@ -185,7 +191,8 @@ class Recipe():
     plex = None
     trakt = None
     tmdb = None
-    tvdb = None
+    mdblist = None
+    tmdb_source = None
 
     def __init__(self, recipe_name, sort_only=False, config_file=None, use_playlists=False):
         self.recipe_name = recipe_name
@@ -212,28 +219,30 @@ class Recipe():
         self.plex = plexutils.Plex(self.config['plex']['baseurl'],
                                    self.config['plex']['token'])
 
-        if self.config['trakt']['username']:
+        trakt_config = self.config.get('trakt') or {}
+        if trakt_config.get('username') and traktutils:
             self.trakt = traktutils.Trakt(
-                self.config['trakt']['username'],
-                client_id=self.config['trakt']['client_id'],
-                client_secret=self.config['trakt']['client_secret'],
-                oauth_token=self.config['trakt'].get('oauth_token', ''),
+                trakt_config['username'],
+                client_id=trakt_config.get('client_id', ''),
+                client_secret=trakt_config.get('client_secret', ''),
+                oauth_token=trakt_config.get('oauth_token', ''),
                 oauth=self.recipe.get('trakt_oauth', False),
                 config=self.config)
             if self.trakt.oauth_token:
                 self.config['trakt']['oauth_token'] = self.trakt.oauth_token
 
-        if self.config['tmdb']['api_key']:
+        tmdb_config = self.config.get('tmdb') or {}
+        if tmdb_config.get('api_key'):
             self.tmdb = tmdb.TMDb(
-                self.config['tmdb']['api_key'],
-                cache_file=self.config['tmdb']['cache_file'])
+                tmdb_config['api_key'],
+                cache_file=tmdb_config.get('cache_file'))
 
-        if self.config['tvdb']['username']:
-            self.tvdb = tvdb.TheTVDB(self.config['tvdb']['username'],
-                                     self.config['tvdb']['api_key'],
-                                     self.config['tvdb']['user_key'])
+        mdblist_config = self.config.get('mdblist') or {}
+        if mdblist_config.get('api_key'):
+            self.mdblist = mdblistutils.MDBList(mdblist_config['api_key'])
 
-        self.imdb = imdbutils.IMDb(self.tmdb, self.tvdb)
+        self.tmdb_source = tmdbutils.TMDbSource(self.tmdb) if self.tmdb else None
+        self.imdb = imdbutils.IMDb(self.tmdb)
 
         self.source_map = IdMap(matching_only=True,
                                 cache_file=self.config.get('guid_cache_file'))
@@ -241,24 +250,70 @@ class Recipe():
 
 
 
-    def _get_trakt_lists(self):
+    def _list_settings(self):
+        """The recipe section that governs this run (playlist or library)."""
+        if self.use_playlists:
+            return self.recipe.get('new_playlist') or {}
+        return self.recipe.get('new_library') or {}
+
+    def _source_for(self, url):
+        """Pick the provider for a source list URL.
+
+        Raises with an actionable message rather than falling through to a
+        silent no-op, which is how a dead source used to wipe a library.
+        """
+        if 'api.trakt.tv' in url:
+            if not self.trakt:
+                raise SourceListError(
+                    "'{}' needs Trakt, but no Trakt credentials are "
+                    "configured. Note that Trakt has restricted new API keys "
+                    "to VIP accounts; MDBList mirrors most Trakt lists on a "
+                    "free key.".format(url))
+            return self.trakt
+        if mdblistutils.MDBList.handles(url):
+            if not self.mdblist:
+                raise SourceListError(
+                    "'{}' needs MDBList, but no API key is configured. Get a "
+                    "free key from https://mdblist.com/preferences and add it "
+                    "to config.yml under mdblist: api_key".format(url))
+            return self.mdblist
+        if tmdbutils.TMDbSource.handles(url):
+            if not self.tmdb_source:
+                raise SourceListError(
+                    "'{}' needs TMDb, but no API key is configured. Add one "
+                    "to config.yml under tmdb: api_key".format(url))
+            return self.tmdb_source
+        if 'imdb.com' in url:
+            return self.imdb
+        raise SourceListError("Unsupported source list: {url}".format(url=url))
+
+    def _get_source_lists(self):
         item_list = []  # TODO Replace with dict, scrap item_ids?
         item_ids = []
 
+        max_age = self._list_settings().get('max_age', 0) or 0
+
         for url in self.recipe['source_list_urls']:
-            max_age = (self.recipe['new_playlist'].get('max_age', 0) if self.use_playlists
-                       else self.recipe['new_library'].get('max_age', 0))
-            if 'api.trakt.tv' in url:
-                (item_list, item_ids) = self.trakt.add_items(
-                    self.library_type, url, item_list, item_ids,
-                    max_age or 0)
-            elif 'imdb.com/chart' in url:
-                (item_list, item_ids) = self.imdb.add_items(
-                    self.library_type, url, item_list, item_ids,
-                    max_age or 0)
-            else:
-                raise Exception("Unsupported source list: {url}".format(
-                    url=url))
+            source = self._source_for(url)
+            before = len(item_list)
+            (item_list, item_ids) = source.add_items(
+                self.library_type, url, item_list, item_ids, max_age)
+            added = len(item_list) - before
+            logs.info(u"  {} new items from {}".format(added, url))
+            if not added:
+                logs.warning(u"Source list returned no new items: {}".format(
+                    url))
+
+        if not item_list:
+            # Everything downstream treats "not in the source list" as
+            # "remove from the library", so an empty list here would unlink
+            # the entire destination library. Refuse instead.
+            raise SourceListError(
+                "No items were returned by any source list, so there is "
+                "nothing to build. Refusing to continue, because carrying on "
+                "would treat every item already in "
+                "'{}' as stale and remove it.".format(
+                    self._list_settings().get('name', 'the destination')))
 
         if self.recipe['weighted_sorting']['enabled']:
             if self.config['tmdb']['api_key']:
@@ -289,8 +344,7 @@ class Recipe():
         missing_items = []
         matching_total = 0
         nonmatching_idx = []
-        max_count = (self.recipe['new_playlist'].get('max_count', 0) if self.use_playlists
-                     else self.recipe['new_library'].get('max_count', 0))
+        max_count = self._list_settings().get('max_count', 0) or 0
 
         for i, item in enumerate(item_list):
             if 0 < max_count <= matching_total:
@@ -592,12 +646,12 @@ class Recipe():
         updated_paths = []
         deleted_items = []
         max_date = add_years(
-            (self.recipe['new_library']['max_age'] or 0) * -1)
+            (self.recipe['new_library'].get('max_age') or 0) * -1)
         if self.library_type == 'movie':
             for movie in unmatched_items:
                 if not self.recipe['new_library']['remove_from_library']:
                     # Only remove older than max_age
-                    if not self.recipe['new_library']['max_age'] \
+                    if not self.recipe['new_library'].get('max_age') \
                             or (movie.originallyAvailableAt and
                                 max_date < movie.originallyAvailableAt):
                         continue
@@ -737,7 +791,7 @@ class Recipe():
 
     def _run(self, share_playlist_to_all=False):
         # Get the trakt lists
-        item_list, item_ids = self._get_trakt_lists()
+        item_list, item_ids = self._get_source_lists()
         force_imdb_id_match = False
 
         # Get list of items from the Plex server
@@ -790,7 +844,7 @@ class Recipe():
             return missing_items, len(all_new_items)
 
     def _run_sort_only(self):
-        item_list, item_ids = self._get_trakt_lists()
+        item_list, item_ids = self._get_source_lists()
         force_imdb_id_match = False
 
         # Get existing library and its items
@@ -849,11 +903,11 @@ class Recipe():
                 # Everything younger than this will get 1
                 min_days = 180
                 # Everything older than this will get 0
-                max_days = (float(self.recipe['new_library']['max_age'])
+                max_days = (float(self._list_settings().get('max_age') or 0)
                             / 4.0 * 365.25 or 360)
             else:
                 min_days = 14
-                max_days = (float(self.recipe['new_library']['max_age'])
+                max_days = (float(self._list_settings().get('max_age') or 0)
                             / 4.0 * 365.25 or 180)
             if days <= min_days:
                 return 1

@@ -1,0 +1,65 @@
+# IMDb Top 250, sourced from MDBList.
+#
+# IMDb itself is behind AWS WAF bot protection and can no longer be scraped.
+# There is no *official* MDBList Top 250, but several user lists mirror the
+# chart. This uses adamosborne01's: 250 items, dynamic (auto-refreshing), and
+# by far the most-liked of the ~100 candidates.
+#
+# Note that many "IMDb Top 250" lists on MDBList are filtered derivatives
+# (English only, 1990+, no animation, ...) and hold noticeably fewer than 250
+# items. If you swap this list out, check the `items` count first:
+#   curl -s "https://api.mdblist.com/lists/search?query=imdb+top+250&apikey=KEY"
+#
+# The slug alone is not unique -- dozens of users have a list called
+# `imdb-top-250` -- so list paths always need {user}/{slug}.
+#
+# For a TV equivalent, set library_type to 'tv' and use one of:
+#   https://api.mdblist.com/lists/agent117184/imdb-top-250-shows/items
+#   https://api.mdblist.com/lists/treeman183/imdb-top-250-tv-shows/items
+#
+# Unlike the official lists, a user list can be deleted or made private by its
+# owner. If that happens the recipe now fails with an explicit error rather
+# than quietly emptying the library.
+
+library_type: 'movie'
+
+source_list_urls:
+  - 'https://api.mdblist.com/lists/adamosborne01/imdb-top-250/items?limit=250'
+
+# Source library details
+source_libraries:
+  - name: 'Movies'
+    folders:
+      - '/path/to/Movies'
+
+# New playlist details
+new_playlist:
+  name: 'Movies - IMDb Top 250'
+  max_age: 0
+  max_count: 250
+  remove_from_playlist: true
+  share_to_all: false
+
+# New library details
+new_library:
+  name: 'Movies - IMDb Top 250'
+  folder: '/path/to/symlink/supporting/filesystem/Movies - IMDb Top 250/'
+  sort: true
+  sort_title:
+    format: '{number}. {title}'
+    visible: false
+    absolute: false
+  max_age: 0
+  max_count: 250
+  remove_from_library: true
+
+# Keep the chart's own ordering
+weighted_sorting:
+  enabled: false
+  better_release_date: false
+  weights:
+    index: 1.0
+    vote: 0.0
+    age: 0.0
+    random: 0.0
+    genre_bias: {}

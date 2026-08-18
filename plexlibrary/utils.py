@@ -1,7 +1,33 @@
 # -*- coding: utf-8 -*-
+import os
 from datetime import datetime
 
 import ruamel.yaml
+
+
+def resolve_cache_path(path, default):
+    """Expand ~ and env vars in a cache path and make sure its parent exists.
+
+    /tmp gets cleared on reboot, so the defaults live under ~/.cache now; that
+    only works if the directory is actually created.
+    """
+    path = os.path.expandvars(os.path.expanduser(path or default))
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        try:
+            os.makedirs(parent)
+        except OSError:
+            pass
+    return path
+
+
+class SourceListError(Exception):
+    """Raised when a source list cannot be retrieved or comes back empty.
+
+    Always fatal: continuing with an empty item list makes every item in the
+    destination library look unmatched, which the cleanup phase would then
+    happily unlink.
+    """
 
 
 class Colors(object):

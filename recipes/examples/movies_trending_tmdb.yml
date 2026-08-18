@@ -1,0 +1,55 @@
+# Trending movies, sourced from TMDb.
+#
+# Needs only a TMDb API key, which you already need for weighted sorting, so
+# this is the zero-extra-credentials replacement for the old Trakt recipes.
+
+library_type: 'movie'
+
+# Source list(s)
+# * `limit` is the number of items to take from each endpoint
+# * Every other query parameter is passed straight through to TMDb, so the
+#   full /discover filter set is available
+source_list_urls:
+  - 'https://api.themoviedb.org/3/trending/movie/week?limit=100'
+  - 'https://api.themoviedb.org/3/movie/popular?limit=100'
+  - 'https://api.themoviedb.org/3/discover/movie?sort_by=vote_average.desc&vote_count.gte=500&limit=100'
+
+# Source library details
+source_libraries:
+  - name: 'Movies'
+    folders:
+      - '/path/to/Movies'
+
+# New playlist details
+new_playlist:
+  name: 'Movies - Trending'
+  max_age: 3
+  max_count: 250
+  remove_from_playlist: true
+  share_to_all: false
+
+# New library details
+new_library:
+  name: 'Movies - Trending'
+  folder: '/path/to/symlink/supporting/filesystem/Movies - Trending/'
+  sort: true
+  sort_title:
+    format: '{number}. {title}'
+    visible: false
+    absolute: false
+  max_age: 3
+  max_count: 250
+  remove_from_library: true
+
+# Weighted sorting (requires TMDb API)
+weighted_sorting:
+  enabled: true
+  better_release_date: false
+  weights:
+    index: 0.70
+    vote: 0.10
+    age: 0.15
+    random: 0.05
+    genre_bias:
+      'TV Movie': 0.7
+      'Animation': 0.95

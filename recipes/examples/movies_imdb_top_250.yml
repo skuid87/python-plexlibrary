@@ -1,3 +1,10 @@
+# DEPRECATED -- this recipe can no longer work.
+#
+# IMDb serves scripted requests an AWS WAF bot-protection challenge
+# instead of the chart, so the source URL below will fail with an
+# explicit error. Use movies_imdb_top_250_mdblist.yml instead, which
+# reads the same chart via MDBList on a free API key.
+
 # Supported types: movie, tv
 library_type: 'movie'
 

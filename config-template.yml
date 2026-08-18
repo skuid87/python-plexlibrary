@@ -1,4 +1,4 @@
-guid_cache_file: '/tmp/plex_guid_cache.json'
+guid_cache_file: '~/.cache/plexlibrary/plex_guid_cache.json'
 
 # Plex server details
 # * Defaults to plexapi config
@@ -6,28 +6,32 @@ plex:
     baseurl: 'http://localhost:32400'
     token: ''  # https://support.plex.tv/hc/en-us/articles/204059436-Finding-an-authentication-token-X-Plex-Token
 
+# The Movie Database details
+# * Free for non-commercial use: https://developer.themoviedb.org/docs
+# * Required for weighted sorting (scores, release dates)
+# * Required to resolve IMDb/TheTVDB ids for library items whose Plex agent
+#   doesn't already provide them
+# * Also usable as a list source, e.g.
+#     https://api.themoviedb.org/3/trending/movie/week
+tmdb:
+    api_key: ''
+    cache_file: '~/.cache/plexlibrary/tmdb_details.shelve'
+
+# MDBList details
+# * Free API key (1000 requests/day): https://mdblist.com/preferences
+# * Aggregates Trakt, IMDb, TMDb, Letterboxd and Rotten Tomatoes lists, so it
+#   replaces both the Trakt endpoints and the IMDb charts, e.g.
+#     https://api.mdblist.com/lists/official/moviemeter/items
+mdblist:
+    api_key: ''
+
 # trakt.tv API details
-# * Required for fetching trakt lists
-# Create a Trakt.tv account, then create an API app here:
-# https://trakt.tv/oauth/applications/new
+# * OPTIONAL and effectively legacy: since 2026 Trakt only lets VIP accounts
+#   create API applications, and existing keys have been revoked in some
+#   cases. Leave blank unless you already hold a working client_id.
+# * MDBList mirrors most Trakt lists on a free key.
 trakt:
     username: ''
     client_id: ''
     client_secret: ''
     oauth_token: ''  # Filled in later depending on recipe
-
-# The Movie Database details
-# * Required for fetching scores, release dates etc for weighted sorting
-# * Required for matching any library items that use the TMDb agent with the items from the lists
-#   (if those items do not include a TMDb ID)
-tmdb:
-    api_key: ''
-    cache_file: '/tmp/tmdb_details.shelve'
-
-# TheTVDB details
-# * Required for matching any library items that use the TheTVDB agent with the items from the lists
-#   (if those items do not include a TheTVDB ID)
-tvdb:
-    username: ''
-    api_key: ''
-    user_key: ''

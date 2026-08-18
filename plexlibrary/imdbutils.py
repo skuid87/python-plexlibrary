@@ -1,26 +1,52 @@
 # -*- coding: utf-8 -*-
+"""IMDb chart scraping.
+
+IMDb now sits behind AWS WAF bot protection: a plain request gets 403, and a
+browser-shaped one gets a 202 carrying a JavaScript challenge instead of the
+chart. There is no supported way to read the charts programmatically, so this
+module's job is mostly to fail loudly and point somewhere that works.
+
+Equivalent lists are available from MDBList (see mdblistutils) and TMDb (see
+tmdbutils), both on free keys.
+"""
 import datetime
 
 import requests
 from lxml import html
 
 import logs
-from utils import add_years
+from utils import SourceListError, add_years
+
+ALTERNATIVES = (
+    "IMDb no longer serves its charts to scripts (AWS WAF bot protection).\n"
+    "        Equivalent free sources:\n"
+    "          - https://api.mdblist.com/lists/official/moviemeter/items"
+    "  (mirrors this exact chart)\n"
+    "          - https://api.themoviedb.org/3/movie/top_rated\n"
+    "          - https://api.themoviedb.org/3/trending/movie/week"
+)
 
 
 class IMDb(object):
-    def __init__(self, tmdb, tvdb):
+    def __init__(self, tmdb):
         self.tmdb = tmdb
-        self.tvdb = tvdb
 
     def _handle_request(self, url):
-        """Stolen from Automated IMDB Top 250 Plex library script
-           by /u/SwiftPanda16
-        """
-        r = requests.get(url)
-        tree = html.fromstring(r.content)
+        r = requests.get(url, timeout=30)
 
-        # Dict of the IMDB top 250 ids in order
+        if r.status_code != 200:
+            raise SourceListError(
+                "IMDb returned HTTP {} for {}.\n        {}".format(
+                    r.status_code, url, ALTERNATIVES))
+
+        body = r.content or b''
+        if b'awsWafCookieDomainList' in body or b'challenge.js' in body:
+            raise SourceListError(
+                "IMDb served a bot-protection challenge instead of {}.\n"
+                "        {}".format(url, ALTERNATIVES))
+
+        tree = html.fromstring(body)
+
         titles = tree.xpath("//table[contains(@class, 'chart')]"
                             "//td[@class='titleColumn']/a/text()")
         years = tree.xpath("//table[contains(@class, 'chart')]"
@@ -28,104 +54,103 @@ class IMDb(object):
         ids = tree.xpath("//table[contains(@class, 'chart')]"
                          "//td[@class='ratingColumn']/div//@data-titleid")
 
+        if not ids:
+            raise SourceListError(
+                "Could not parse any titles out of {}. IMDb's markup has "
+                "changed since this parser was written.\n        {}".format(
+                    url, ALTERNATIVES))
+
         return ids, titles, years
 
     def add_movies(self, url, movie_list=None, movie_ids=None, max_age=0):
-        if not movie_list:
+        if movie_list is None:
             movie_list = []
-        if not movie_ids:
+        if movie_ids is None:
             movie_ids = []
         max_date = add_years(max_age * -1)
-        logs.info(u"Retrieving the IMDB list: {}".format(url))
+        logs.info(u"Retrieving the IMDb list: {}".format(url))
 
         (imdb_ids, imdb_titles, imdb_years) = self._handle_request(url)
         for i, imdb_id in enumerate(imdb_ids):
-            # Skip already added movies
             if imdb_id in movie_ids:
                 continue
 
+            tmdb_data = None
             if self.tmdb:
                 tmdb_data = self.tmdb.get_tmdb_from_imdb(imdb_id, 'movie')
 
-            if tmdb_data and tmdb_data['release_date']:
+            if tmdb_data and tmdb_data.get('release_date'):
                 date = datetime.datetime.strptime(tmdb_data['release_date'],
                                                   '%Y-%m-%d')
-            elif imdb_years[i]:
-                date = datetime.datetime(int(str(imdb_years[i]).strip("()")),
-                                     12, 31)
+            elif i < len(imdb_years) and imdb_years[i]:
+                date = datetime.datetime(
+                    int(str(imdb_years[i]).strip("()")), 12, 31)
             else:
-                date = datetime.date.today()
+                date = datetime.datetime.now()
 
-            # Skip old movies
             if max_age != 0 and (max_date > date):
                 continue
+
             movie_list.append({
                 'id': imdb_id,
-                'tmdb_id': tmdb_data['id'] if tmdb_data else None,
-                'title': tmdb_data['title'] if tmdb_data else imdb_titles[i],
+                'tmdb_id': str(tmdb_data['id']) if tmdb_data else None,
+                'title': (tmdb_data['title'] if tmdb_data
+                          else imdb_titles[i] if i < len(imdb_titles)
+                          else imdb_id),
                 'year': date.year,
             })
             movie_ids.append(imdb_id)
-            if tmdb_data and tmdb_data['id']:
+            if tmdb_data and tmdb_data.get('id'):
                 movie_ids.append('tmdb' + str(tmdb_data['id']))
 
         return movie_list, movie_ids
 
     def add_shows(self, url, show_list=None, show_ids=None, max_age=0):
-        if not show_list:
+        if show_list is None:
             show_list = []
-        if not show_ids:
+        if show_ids is None:
             show_ids = []
         curyear = datetime.datetime.now().year
         logs.info(u"Retrieving the IMDb list: {}".format(url))
-        data = {}
-        if max_age != 0:
-            data['extended'] = 'full'
+
         (imdb_ids, imdb_titles, imdb_years) = self._handle_request(url)
         for i, imdb_id in enumerate(imdb_ids):
-            # Skip already added shows
             if imdb_id in show_ids:
                 continue
 
-            if self.tvdb:
-                tvdb_data = self.tvdb.get_tvdb_from_imdb(imdb_id)
-
+            tmdb_data = None
+            external = {}
             if self.tmdb:
                 tmdb_data = self.tmdb.get_tmdb_from_imdb(imdb_id, 'tv')
+                if tmdb_data and tmdb_data.get('id'):
+                    external = self.tmdb.get_external_ids(tmdb_data['id'], 'tv')
 
-            if tvdb_data and tvdb_data['firstAired'] != "":
-                year = datetime.datetime.strptime(tvdb_data['firstAired'],
-                                                  '%Y-%m-%d').year
-            elif tmdb_data and tmdb_data['first_air_date'] != "":
-                year = datetime.datetime.strptime(tmdb_data['first_air_date'],
-                                                  '%Y-%m-%d').year
-            elif imdb_years[i]:
-                year = str(imdb_years[i]).strip("()")
+            if tmdb_data and tmdb_data.get('first_air_date'):
+                year = datetime.datetime.strptime(
+                    tmdb_data['first_air_date'], '%Y-%m-%d').year
+            elif i < len(imdb_years) and imdb_years[i]:
+                year = int(str(imdb_years[i]).strip("()"))
             else:
-                year = datetime.date.today().year
+                year = curyear
 
-            # Skip old shows
-            if max_age != 0 \
-                    and (curyear - (max_age - 1)) > year:
+            if max_age != 0 and (curyear - (max_age - 1)) > year:
                 continue
 
-            if tvdb_data:
-                title = tvdb_data['seriesName']
-            else:
-                title = tmdb_data['name'] if tmdb_data else imdb_titles[i]
-
+            tvdb_id = external.get('tvdb_id')
             show_list.append({
                 'id': imdb_id,
-                'tvdb_id': tvdb_data['id'] if tvdb_data else None,
-                'tmdb_id': tmdb_data['id'] if tmdb_data else None,
-                'title': title,
+                'tvdb_id': str(tvdb_id) if tvdb_id else None,
+                'tmdb_id': str(tmdb_data['id']) if tmdb_data else None,
+                'title': (tmdb_data['name'] if tmdb_data
+                          else imdb_titles[i] if i < len(imdb_titles)
+                          else imdb_id),
                 'year': year,
             })
             show_ids.append(imdb_id)
-            if tmdb_data and tmdb_data['id']:
+            if tmdb_data and tmdb_data.get('id'):
                 show_ids.append('tmdb' + str(tmdb_data['id']))
-            if tvdb_data and tvdb_data['id']:
-                show_ids.append('tvdb' + str(tvdb_data['id']))
+            if tvdb_id:
+                show_ids.append('tvdb' + str(tvdb_id))
 
         return show_list, show_ids
 
