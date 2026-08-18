@@ -593,6 +593,22 @@ class Recipe():
             logs.info(u"{title} ({year})".format(title=item.title, year=getattr(item, 'year', None)))
         return count
 
+    def _current_library_count(self):
+        """How many items the destination library holds right now.
+
+        Zero if it doesn't exist yet, which is the correct baseline for a
+        first run.
+        """
+        try:
+            library = self.plex.server.library.section(
+                self.recipe['new_library']['name'])
+        except Exception:
+            return 0
+        try:
+            return len(library.all())
+        except Exception:
+            return 0
+
     def _verify_new_library_and_get_items(self, create_if_not_found=False, expected_count=None):
         # Check if the new library exists in Plex
         try:
@@ -659,9 +675,12 @@ class Recipe():
         if self.recipe['new_library']['sort']:
             logs.info(u"Setting the sort titles for the '{}' library".format(
                 self.recipe['new_library']['name']))
+        unsorted_items = []
         if self.recipe['new_library']['sort_title']['absolute']:
             for i, m in enumerate(item_list):
                 item = self.dest_map.pop(m.get('id'), m.get('tmdb_id'), m.get('tvdb_id'))
+                if not item:
+                    unsorted_items.append(m)
                 if item and self.recipe['new_library']['sort']:
                     self.plex.set_sort_title(
                         new_library.key, item.ratingKey, i + 1, m['title'],
@@ -674,6 +693,8 @@ class Recipe():
             for m in item_list:
                 i += 1
                 item = self.dest_map.pop(m.get('id'), m.get('tmdb_id'), m.get('tvdb_id'))
+                if not item:
+                    unsorted_items.append(m)
                 if item and self.recipe['new_library']['sort']:
                     self.plex.set_sort_title(
                         new_library.key, item.ratingKey, i, m['title'],
@@ -681,6 +702,16 @@ class Recipe():
                         self.recipe['new_library']['sort_title']['format'],
                         self.recipe['new_library']['sort_title']['visible']
                     )
+        if unsorted_items and self.recipe['new_library']['sort']:
+            # Plex hadn't finished scanning these when the item list was
+            # read, so they carry no sort title and will fall out of order.
+            # Re-running the recipe (or `-s`) numbers them once they appear.
+            logs.warning(u"{} item(s) were not found in the library yet and "
+                         u"have no sort title:".format(len(unsorted_items)))
+            for m in unsorted_items:
+                logs.warning(u"    {} ({})".format(m.get('title'),
+                                                   m.get('year')))
+
         unmatched_items = list(self.dest_map.items)
         if not sort_only and (
                 self.recipe['new_library']['remove_from_library'] or
@@ -896,12 +927,24 @@ class Recipe():
             return missing_items, (len(playlist_items) if playlist_items else 0)
         else:
             # Start library process
+            # How many items Plex can already see, before anything is linked.
+            # Waiting for a bare count of len(matching_items) is not enough:
+            # the library usually already holds that many items from the last
+            # run, so the wait satisfies immediately and the sort titles get
+            # applied from a stale list, leaving the newly linked items
+            # unnumbered.
+            existing_count = self._current_library_count()
             # Create symlinks for all items in your library on the trakt watched
             count = self._create_symbolic_links(matching_items=matching_items, matching_total=matching_total)
             # Post-process new library
             logs.info(u"Creating the '{}' library in Plex...".format(
                 self.recipe['new_library']['name']))
-            new_library, all_new_items = self._verify_new_library_and_get_items(create_if_not_found=True, expected_count=len(matching_items))
+            # Stale items are only removed further down, so at this point the
+            # library should hold what it had plus everything just linked.
+            expected_after_linking = existing_count + count
+            new_library, all_new_items = self._verify_new_library_and_get_items(
+                create_if_not_found=True,
+                expected_count=expected_after_linking)
             self.dest_map.add_items(all_new_items)
             # Modify the sort titles
             all_new_items = self._modify_sort_titles_and_cleanup(

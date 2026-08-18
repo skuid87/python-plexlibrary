@@ -210,3 +210,51 @@ class LegacyConfigCompatibilityTest(unittest.TestCase):
         sources = recipe_module.build_sources(self._config(dict(self.LEGACY)))
         self.assertEqual(sources['tmdb'].cache_file,
                          '/tmp/tmdb_details.shelve')
+
+
+class ExpectedCountTest(unittest.TestCase):
+    """The wait after linking must account for what the library already has.
+
+    Waiting for len(matching_items) alone satisfies instantly when the
+    library already holds that many items from the previous run, so sort
+    titles get applied before Plex has scanned the new symlinks and the new
+    items end up unnumbered.
+    """
+
+    def test_expected_count_is_existing_plus_newly_linked(self):
+        existing, newly_linked, matched = 30, 10, 30
+        naive = matched
+        correct = existing + newly_linked
+        # The naive target is already met before Plex scans anything new
+        self.assertLessEqual(naive, existing)
+        self.assertGreater(correct, existing)
+        self.assertEqual(correct, 40)
+
+    def test_first_run_baseline_is_zero(self):
+        r = bare_recipe(recipe={'new_library': {'name': 'Nope'}})
+
+        class NoLibrary(object):
+            class server(object):
+                class library(object):
+                    @staticmethod
+                    def section(name):
+                        raise Exception("no such library")
+        r.plex = NoLibrary()
+        self.assertEqual(r._current_library_count(), 0)
+
+    def test_existing_library_count_is_read(self):
+        r = bare_recipe(recipe={'new_library': {'name': 'Trending Movies'}})
+
+        class Section(object):
+            @staticmethod
+            def all():
+                return [object()] * 30
+
+        class HasLibrary(object):
+            class server(object):
+                class library(object):
+                    @staticmethod
+                    def section(name):
+                        return Section()
+        r.plex = HasLibrary()
+        self.assertEqual(r._current_library_count(), 30)
