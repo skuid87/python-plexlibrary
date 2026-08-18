@@ -399,6 +399,41 @@ class Recipe():
 
         return matching_items, missing_items, matching_total, nonmatching_idx, max_count
 
+    def _remove_stale_link(self, link_path, expected_target=None):
+        """Remove a symlink that dangles or points somewhere unexpected.
+
+        os.path.exists() follows symlinks, so a broken link looks absent to
+        it while os.path.lexists() still sees it. Link creation is guarded on
+        lexists(), so without this a broken link is never repaired and its
+        item silently never appears in the new library.
+
+        Returns True if the path was cleared.
+        """
+        if not os.path.islink(link_path):
+            return False
+
+        dangling = not os.path.exists(link_path)
+        mispointed = False
+        if not dangling and expected_target:
+            try:
+                mispointed = (os.path.realpath(link_path) !=
+                              os.path.realpath(expected_target))
+            except OSError:
+                mispointed = False
+
+        if not (dangling or mispointed):
+            return False
+
+        try:
+            os.unlink(link_path)
+            logs.info(u"Removed {} symlink: '{}'".format(
+                "broken" if dangling else "outdated", link_path))
+            return True
+        except OSError as e:
+            logs.error(u"Could not remove stale symlink '{}': {}".format(
+                link_path, e))
+            return False
+
     def _create_symbolic_links(self, matching_items, matching_total):
         logs.info(u"Creating symlinks for {count} matching items in the "
                   u"library...".format(count=matching_total))
@@ -436,6 +471,9 @@ class Recipe():
                                 self.recipe['new_library']['folder'],
                                 file_name)
                             dir = False
+                            if os.path.islink(new_path):
+                                self._remove_stale_link(new_path,
+                                                        old_path_file)
                         else:
                             new_path = os.path.join(
                                 self.recipe['new_library']['folder'],
@@ -452,17 +490,11 @@ class Recipe():
                                         pass
                                     else:
                                         raise
-                            # Clean up old, empty directories
+                            # Clear anything stale so the link below can be
+                            # (re)created
                             if os.path.lexists(new_path):
                                 if os.path.islink(new_path):
-                                    # It's a link (broken or not), remove it if we need to recreate or if it's "empty" logic applies?
-                                    # The original logic only removed if os.listdir was empty (for dirs).
-                                    # But for symlinks, we probably want to remove if we are about to overwrite?
-                                    # Actually, the original logic was: if exists and empty, remove.
-                                    # But broken links look like they don't exist to os.path.exists.
-                                    # So we should check if it's a broken link and remove it?
-                                    # Or just remove it if we are about to overwrite it?
-                                    pass 
+                                    self._remove_stale_link(new_path, old_path)
                                 elif os.path.isdir(new_path) and not os.listdir(new_path):
                                     os.rmdir(new_path)
 

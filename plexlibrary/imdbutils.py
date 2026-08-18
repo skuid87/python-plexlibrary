@@ -34,16 +34,20 @@ class IMDb(object):
     def _handle_request(self, url):
         r = requests.get(url, timeout=30)
 
+        body = r.content or b''
+
+        # Check for the challenge before the status code: IMDb serves it with
+        # a 202, and "we were challenged" is a more useful diagnosis than
+        # "unexpected status".
+        if b'awsWafCookieDomainList' in body or b'challenge.js' in body:
+            raise SourceListError(
+                "IMDb served a bot-protection challenge (HTTP {}) instead of "
+                "{}.\n        {}".format(r.status_code, url, ALTERNATIVES))
+
         if r.status_code != 200:
             raise SourceListError(
                 "IMDb returned HTTP {} for {}.\n        {}".format(
                     r.status_code, url, ALTERNATIVES))
-
-        body = r.content or b''
-        if b'awsWafCookieDomainList' in body or b'challenge.js' in body:
-            raise SourceListError(
-                "IMDb served a bot-protection challenge instead of {}.\n"
-                "        {}".format(url, ALTERNATIVES))
 
         tree = html.fromstring(body)
 

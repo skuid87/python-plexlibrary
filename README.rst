@@ -159,6 +159,21 @@ When you're happy with the results, automate the recipe in cron_ or equivalent (
 
 **Pro tip!** Edit the new library and uncheck *"Include in dashboard"*. Othewise if you start watching something that exists in multiple libraries, all items will show up on the On Deck. This makes it so that only the item in your main library shows up.
 
+Tests
+-----
+
+The test suite uses only the standard library, so it needs no extra
+dependencies -- but it does import the project's modules, so run it inside the
+virtualenv where the requirements are installed:
+
+.. code-block:: shell
+
+    python3 -m unittest discover -s tests -t .
+
+It covers source dispatch, URL parsing, item normalisation, cursor pagination,
+error mapping, the empty-list guard and stale symlink handling. Nothing in it
+touches the network or a Plex server, so it is safe to run anywhere.
+
 A note on removals
 ------------------
 
