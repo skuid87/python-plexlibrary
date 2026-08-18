@@ -174,6 +174,47 @@ When you're happy with the results, automate the recipe in cron_ or equivalent (
 
 .. _cron: https://code.tutsplus.com/tutorials/scheduling-tasks-with-cron-jobs--net-8800
 
+Running it from anywhere, and on a schedule
+-------------------------------------------
+
+Two helper scripts are included. Both work out whatever directory they live
+in, so they are not tied to any particular install path (set
+``PLEXLIBRARY_PATH`` to override), and both expect a virtualenv at
+``venv/`` inside the install directory.
+
+``plexlibrary.sh`` runs a single recipe and logs to ``plexlibrary.log``.
+Symlink it onto your PATH to get the command available everywhere:
+
+.. code-block:: shell
+
+    chmod +x plexlibrary.sh
+    sudo ln -sf "$(pwd)/plexlibrary.sh" /usr/local/bin/plexlibrary
+
+Then, from any directory:
+
+.. code-block:: shell
+
+    plexlibrary trending
+    plexlibrary -s trending
+    plexlibrary --check-source 'imdb://chart/top_movies'
+
+``plexlibrary-cron-helper.sh`` runs *every* recipe in ``recipes/`` in turn and
+logs to ``plexlibrary-cron.log``. Point cron at it:
+
+.. code-block:: shell
+
+    0 6 * * * /opt/python-plexlibrary/plexlibrary-cron-helper.sh
+
+It takes a lock for the duration, so a long run can never overlap with the
+next scheduled one -- worth having, because all recipes share a single
+``guid_cache_file`` that is rewritten wholesale each time. It also exits
+non-zero if any recipe failed, so a monitor watching the exit code will
+notice a source that has stopped working.
+
+Both scripts come from `Saltbox's Sandbox <https://github.com/saltyorg/Sandbox>`_
+and are **GPLv3**, unlike the rest of this project. Modifications are listed
+in each file's header.
+
 **Pro tip!** Edit the new library and uncheck *"Include in dashboard"*. Othewise if you start watching something that exists in multiple libraries, all items will show up on the On Deck. This makes it so that only the item in your main library shows up.
 
 Tests
