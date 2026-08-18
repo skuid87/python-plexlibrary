@@ -21,6 +21,23 @@ import sys
 import recipes
 from config import ConfigParser
 from recipe import Recipe, build_sources, resolve_source
+from utils import SourceListError
+
+
+def die(message):
+    """Report a user-facing failure without a traceback."""
+    sys.stdout.flush()  # keep the error below whatever we already printed
+    sys.stderr.write("Error: {}\n".format(message))
+    sys.exit(1)
+
+
+def load_config(config_file):
+    try:
+        return ConfigParser(config_file)
+    except IOError as e:
+        die("could not read the config file: {}\n"
+            "       Copy config-template.yml to config.yml, or pass "
+            "--config PATH.".format(e))
 
 
 def list_recipes(directory=None):
@@ -36,9 +53,12 @@ def check_source(url, library_type='movie', max_age=0, config_file=None):
     written, and no symlinks are touched. Use it to verify credentials and
     see the ids a list actually provides before wiring it into a recipe.
     """
-    config = ConfigParser(config_file)
+    config = load_config(config_file)
     sources = build_sources(config)
-    source = resolve_source(url, sources)
+    try:
+        source = resolve_source(url, sources)
+    except SourceListError as e:
+        die(str(e))
 
     print("Source   : {}".format(type(source).__name__))
     print("URL      : {}".format(url))
@@ -46,7 +66,10 @@ def check_source(url, library_type='movie', max_age=0, config_file=None):
         library_type, "  (max_age {})".format(max_age) if max_age else ""))
     print("")
 
-    items, _ = source.add_items(library_type, url, [], [], max_age)
+    try:
+        items, _ = source.add_items(library_type, url, [], [], max_age)
+    except SourceListError as e:
+        die(str(e))
 
     if not items:
         print("NO ITEMS RETURNED.")
@@ -123,6 +146,10 @@ def main():
     parser.add_argument(
         '--max-age', type=int, default=0, metavar='YEARS',
         help='apply a max_age filter when using --check-source')
+    parser.add_argument(
+        '-c', '--config', metavar='PATH',
+        help='path to the config file (default: config.yml in the base '
+             'directory)')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -135,15 +162,20 @@ def main():
 
     if args.check_source:
         sys.exit(check_source(args.check_source, library_type=args.type,
-                              max_age=args.max_age))
+                              max_age=args.max_age,
+                              config_file=args.config))
 
     if args.recipe not in recipes.get_recipes():
         print("Error: No such recipe")
         list_recipes()
         sys.exit(1)
 
-    r = Recipe(recipe_name=args.recipe, use_playlists=args.playlists)
-    r.run(sort_only=args.sort_only, share_playlist_to_all=args.everyone)
+    try:
+        r = Recipe(recipe_name=args.recipe, use_playlists=args.playlists,
+                   config_file=args.config)
+        r.run(sort_only=args.sort_only, share_playlist_to_all=args.everyone)
+    except SourceListError as e:
+        die(str(e))
 
     print("Done!")
 
