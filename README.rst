@@ -95,6 +95,10 @@ MDBList::
     https://api.mdblist.com/external/lists/{id}/items    # an imported IMDb/Letterboxd list
     https://api.mdblist.com/catalog/movie?genre=horror&sort=imdbrating
 
+``limit`` is the total number of items to collect. ``page_size`` caps how many
+items each request asks for (max 1000) and exists mainly to exercise cursor
+pagination, since most lists fit in a single page.
+
 TMDb::
 
     https://api.themoviedb.org/3/trending/movie/week?limit=100

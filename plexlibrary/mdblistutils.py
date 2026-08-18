@@ -18,8 +18,10 @@ Supported source_list_urls:
     https://api.mdblist.com/catalog/movie?genre=horror&sort=imdbrating&limit=100
     mdblist://lists/official/moviemeter/items                  (shorthand)
 
-`limit` is treated as the total number of items to collect. Every other query
-parameter is passed through to MDBList.
+`limit` is treated as the total number of items to collect. `page_size` caps
+how many items each request asks for (default and maximum 1000); it is only
+useful for exercising cursor pagination, since most lists fit in one page.
+Every other query parameter is passed through to MDBList.
 """
 import datetime
 
@@ -58,10 +60,16 @@ class MDBList(object):
         return parsed.netloc.lower() in cls.HOSTS
 
     def _parse_url(self, url):
-        """Return (api_path, params, limit)."""
+        """Return (api_path, params, limit, page_size)."""
         parsed = urlparse(url)
         params = dict(parse_qsl(parsed.query))
         limit = int(params.pop('limit', DEFAULT_LIMIT) or DEFAULT_LIMIT)
+        # `page_size` is ours, not MDBList's: it caps how many items each
+        # request asks for. Lists rarely exceed one page, so lowering it is
+        # the only practical way to exercise cursor pagination.
+        page_size = int(params.pop('page_size', MAX_PAGE_SIZE)
+                        or MAX_PAGE_SIZE)
+        page_size = max(1, min(page_size, MAX_PAGE_SIZE))
 
         if parsed.scheme == 'mdblist':
             path = "{}{}".format(parsed.netloc, parsed.path)
@@ -84,7 +92,7 @@ class MDBList(object):
             if len(segments) >= 3:
                 path = path + '/items'
 
-        return path, params, limit
+        return path, params, limit, page_size
 
     def _get(self, path, params):
         request_params = dict(params)
@@ -120,7 +128,7 @@ class MDBList(object):
                 "MDBList returned a non-JSON response for {}: {}".format(
                     url, e))
 
-    def _fetch(self, path, params, limit, media_key):
+    def _fetch(self, path, params, limit, media_key, page_size=MAX_PAGE_SIZE):
         """Page through an MDBList endpoint using cursor pagination."""
         collected = []
         cursor = None
@@ -128,7 +136,7 @@ class MDBList(object):
 
         while len(collected) < limit and pages < MAX_PAGES:
             page_params = dict(params)
-            page_params['limit'] = min(limit - len(collected), MAX_PAGE_SIZE)
+            page_params['limit'] = min(limit - len(collected), page_size)
             if cursor:
                 page_params['cursor'] = cursor
 
@@ -146,10 +154,12 @@ class MDBList(object):
 
             pagination = data.get('pagination') or {}
             cursor = pagination.get('next_cursor') or data.get('next_cursor')
-            has_more = headers.get('X-Has-More', '').lower() == 'true'
-            if not cursor or not (has_more or pagination.get('next_cursor')):
+            if not cursor:
                 break
 
+        if pages > 1:
+            logs.info(u"  fetched {} items across {} requests".format(
+                len(collected), pages))
         return collected[:limit]
 
     def _item_ids(self, entry):
@@ -176,7 +186,7 @@ class MDBList(object):
         if item_ids is None:
             item_ids = []
 
-        path, params, limit = self._parse_url(url)
+        path, params, limit, page_size = self._parse_url(url)
 
         # MDBList speaks 'show', the recipes speak 'tv'
         media_key = 'movies' if item_type == 'movie' else 'shows'
@@ -184,7 +194,7 @@ class MDBList(object):
                           'movie' if item_type == 'movie' else 'show')
 
         logs.info(u"Retrieving the MDBList list: {}".format(url))
-        entries = self._fetch(path, params, limit, media_key)
+        entries = self._fetch(path, params, limit, media_key, page_size)
 
         cutoff_year = None
         if max_age:
