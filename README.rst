@@ -44,8 +44,13 @@ The list sources this project can read have changed considerably:
   on it. Non-chart imdb.com URLs still fail with an explicit error rather
   than quietly building an empty library.
 
-* **TheTVDB** *(removed)* — the v3 API was shut down and v4 is paid. TheTVDB
-  ids are now resolved through TMDb instead.
+* **TheTVDB** *(removed)* — not because of cost: v4 keys are free for projects
+  under $50k annual revenue, subject to attribution, or free to the developer
+  under the end-user subscription model where each user supplies their own
+  subscriber PIN. It was dropped because the v3 API this project used has been
+  shut down, and rewriting for v4 would mean a new auth flow, a registered key
+  and an attribution obligation for ids that TMDb and MDBList already supply
+  for free. TheTVDB ids are now resolved through those instead.
 
 Requirements
 ------------
